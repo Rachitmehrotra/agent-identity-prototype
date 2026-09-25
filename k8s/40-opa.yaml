@@ -1,0 +1,67 @@
+# Phase 2: OPA lifts the gateway's hardcoded policy into Rego. Apply this, then
+# set OPA_URL=http://opa:8181/v1/data/agent/authz on the mcp-gateway Deployment.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: opa, namespace: agents }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: opa-policy, namespace: agents }
+data:
+  authz.rego: |
+    package agent.authz
+
+    import rego.v1
+
+    default allow := false
+
+    # Allowlisted human originators and tools. In a real deployment these come
+    # from data documents / external data, not literals.
+    allowed_origins := {"user:rachit@example.com"}
+    allowed_tools := {"open_pr", "read_logs"}
+
+    # Authorize on the ENTIRE lineage, not just the immediate caller.
+    origin := input.origin
+
+    allow if {
+        allowed_origins[origin]
+        allowed_tools[input.tool]
+    }
+
+    reason := "origin and tool permitted" if allow
+    reason := sprintf("denied: origin=%v tool=%v", [origin, input.tool]) if not allow
+
+    # The gateway reads result.allow and result.reason.
+    result := {"allow": allow, "reason": reason}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: opa, namespace: agents }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: opa } }
+  template:
+    metadata: { labels: { app: opa } }
+    spec:
+      serviceAccountName: opa
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:0.68.0
+          args:
+            - "run"
+            - "--server"
+            - "--addr=0.0.0.0:8181"
+            - "/policy/authz.rego"
+          ports: [{ containerPort: 8181 }]
+          volumeMounts:
+            - { name: policy, mountPath: /policy, readOnly: true }
+      volumes:
+        - name: policy
+          configMap: { name: opa-policy }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: opa, namespace: agents }
+spec:
+  selector: { app: opa }
+  ports: [{ port: 8181, targetPort: 8181 }]

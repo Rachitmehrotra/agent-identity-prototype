@@ -1,0 +1,19 @@
+# Vendored istioctl distribution (100MB+) — reinstalled via `brew install istioctl`,
+# not part of this project's own code.
+istio-1.30.2/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Local secrets / generated material — never committed by design (see
+# scripts/bootstrap.sh, which generates the STS signing key to a mktemp file
+# and deletes it after loading it into a k8s Secret).
+*.pem
+*.key
+.env

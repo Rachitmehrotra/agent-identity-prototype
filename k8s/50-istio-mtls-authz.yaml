@@ -1,0 +1,63 @@
+# Phase 2: mesh-level zero trust. Apply AFTER Istio is installed and pods have
+# restarted with sidecars. This enforces mTLS everywhere and pins the allowed
+# call graph at L7 by SPIFFE principal — complementing the app-layer act_chain
+# checks (defense in depth: the mesh says WHO may call WHOM, the JWT says on
+# WHOSE BEHALF and WHY).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: agents
+spec:
+  mtls:
+    mode: STRICT
+---
+# Only oncall may call investigation.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: investigation-allow-oncall, namespace: agents }
+spec:
+  selector: { matchLabels: { app: investigation-agent } }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/agents/sa/oncall"]
+---
+# Only investigation and monitoring may call the gateway.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: gateway-allow-agents, namespace: agents }
+spec:
+  selector: { matchLabels: { app: mcp-gateway } }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/agents/sa/investigation"
+              - "cluster.local/ns/agents/sa/monitoring"
+---
+# Only the gateway may reach downstream. Agents can NEVER call it directly.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: downstream-allow-gateway-only, namespace: agents }
+spec:
+  selector: { matchLabels: { app: downstream } }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/agents/sa/mcp-gateway"]
+---
+# Every workload may reach the STS (all agents must exchange tokens).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: sts-allow-mesh, namespace: agents }
+spec:
+  selector: { matchLabels: { app: sts } }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: ["agents"]
